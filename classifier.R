@@ -85,7 +85,7 @@ for(feat in keywords){
 }
 
 mult <- pol_test
-mult[mult == 0] <- 1 #change all 0s to 1 b/c we are multiplicating row-wise to compute probabilities
+mult[mult == 0] <- 1 #change all 0s to 1 b/c we are multiplying row-wise to compute probabilities
 mult$prior <- rep(pol_prior,nrow(pol_test))
 mult <- mult %>% dplyr::select(-binary)
 # multiply non zero entries across keywords to get P(political|keyword)!
@@ -104,7 +104,7 @@ for(feat in c(keywords)){
 
 # multiply non zero entries across keywords to get P(science|keyword)!
 mult <- science_test
-mult[mult == 0] <- 1 #change all 0s to 1 b/c we are multiplicating row-wise to compute probabilities
+mult[mult == 0] <- 1 #change all 0s to 1 b/c we are multiplying row-wise to compute probabilities
 mult$prior <- rep(sci_prior,nrow(science_test))
 mult <- mult %>% dplyr::select(-binary)
 # multiply non zero entries across keywords to get P(political|keyword)!
