@@ -23,11 +23,14 @@ names(d)[1] <- "tweet"
 
 # choose keywords here
 keywords <- c("climate",
-              "change",
+              "trump",
               "president",
+              "scientist",
               "crisis",
+              "national",
               "research",
               "science",
+              "new",
               "environment",
               "health")
 # lowercase the tweets -- makes string search below accurate
@@ -38,31 +41,30 @@ for(word in keywords){
   d[[word]] <- as.numeric(str_detect(d$tweet,word))
 }
 
-
 # ---- train and test data split
 
 # 80/20 split
 set.seed(1)
 split <- sample(nrow(d)*0.8,(nrow(d)-nrow(d)*0.8))
 train <- d[-split,]
-test <- d[split,]
+test <- d[split,] %>% dplyr::select(-c(tweet,category))
 
 # --- train Naive Bayes classifier with 40 observations
 
 # calculate priors
-prior_1 <- sum(as.numeric(as.character(train$binary)))/nrow(train) #politics
-prior_0 <- nrow(train %>% filter(binary==0))/nrow(train) #science
+pol_prior <- sum(as.numeric(as.character(train$binary)))/nrow(train) #politics
+sci_prior <- nrow(train %>% filter(binary==0))/nrow(train) #science
 
 # separate classes
-class_1 <- train %>% filter(binary == 1)
-class_0 <- train %>% filter(binary == 0)
+pol_tweets <- train %>% filter(binary == 1)
+sci_tweets <- train %>% filter(binary == 0)
 
-# P( keyword | positive/negative )
+# P( keyword | politics/science )
 probability_table <- list()
 for(i in c(keywords)){
   pt <- data.frame(keyword= i,
-                   politics= sum(class_1[,i])/nrow(class_1), #P(keyword|politics)
-                   science= sum(class_0[,i])/nrow(class_0)) #P(keyword|science)
+                   politics= sum(pol_tweets[,i])/nrow(pol_tweets), #P(keyword|politics)
+                   science= sum(sci_tweets[,i])/nrow(sci_tweets)) #P(keyword|science)
   probability_table <- append(probability_table,list(pt))
 }
 
@@ -70,19 +72,90 @@ probability_table <- do.call(rbind, probability_table) %>% arrange(keyword)
 # divide up the above table into P(x|politics) and P(x|science)
 pol_table <- probability_table %>% select(keyword,politics)
 sci_table <- probability_table %>% select(keyword,science)
-
-# --- classify the test data reviews
-
-rownames(test) <- 1:nrow(test) # row indices were random numbers...change to a regular sequence 1-10
-
-
+# THESE ARE OUR TRAINING PROBABILITIES! 
 
 # --------------- P(politics | Keyword) --------------- #
 # calculate by -- P(keyword1 | +) * P(keyword2 | +) * .... * P(politics)
 
 # initialize a new dataset for P(x|politics) results
-politics_test <- test
-# replace binary features with P(x|politics) from training
-for(feat in c(keywords)){
-  politics_test[,feat] <- politics_test[,feat] * pol_table[pol_table$keyword==feat,2]
+pol_test <- test
+# replace binary features with P(x|politics) from training (pol_table)
+for(feat in keywords){
+  pol_test[,feat] <- pol_test[,feat] * pol_table[pol_table$keyword==feat,2]
 }
+
+mult <- pol_test
+mult[mult == 0] <- 1 #change all 0s to 1 b/c we are multiplicating row-wise to compute probabilities
+mult$prior <- rep(pol_prior,nrow(pol_test))
+mult <- mult %>% dplyr::select(-binary)
+# multiply non zero entries across keywords to get P(political|keyword)!
+pol_post <- rowProds(as.matrix(mult))
+pol_test$pol_post <- pol_post
+
+# --------------- P(science | Keyword) --------------- #
+# calculate by -- P(keyword1 | -) * P(keyword2 | -) * .... * P(science)
+
+# initialize a new dataset for P(x|science) results
+science_test <- test
+# replace binary features with P(x|science) from training
+for(feat in c(keywords)){
+  science_test[,feat] <- science_test[,feat] * sci_table[sci_table$keyword==feat,2]
+}
+
+# multiply non zero entries across keywords to get P(science|keyword)!
+mult <- science_test
+mult[mult == 0] <- 1 #change all 0s to 1 b/c we are multiplicating row-wise to compute probabilities
+mult$prior <- rep(sci_prior,nrow(science_test))
+mult <- mult %>% dplyr::select(-binary)
+# multiply non zero entries across keywords to get P(political|keyword)!
+sci_post <- rowProds(as.matrix(mult))
+science_test$sci_post <- sci_post
+
+# --------------- Predict Tweet Category --------------- #
+# if pos_prob > neg_prob, predict as 1 (else, label as 0)
+
+final_table <- data.frame(binary = test$binary,
+                          politics_post = pol_post,
+                          science_post = sci_post,
+                          predicted = rep(1,nrow(test)))
+
+for(i in 1:nrow(final_table)){
+  if(final_table[i,"politics_post"] < final_table[i,"science_post"]){
+    final_table[i,"predicted"] <- 0
+  }
+}
+
+# --------------- model performance --------------- #
+
+performance_suite <- function(labels,prediction){
+  
+  test_table <- table(labels,prediction)
+  print(test_table)
+  print("% Accuracy")
+  acc <- (test_table[1,1]+test_table[2,2])/sum(test_table)*100
+  print(acc)
+  # precision
+  p <- (test_table[2,2])/(test_table[2,2]+test_table[1,2]) 
+  print("Precision")
+  print(p)
+  # recall
+  r <- (test_table[2,2])/(test_table[2,2]+test_table[2,1]) 
+  print("Recall")
+  print(r)
+  # f1
+  f1 <- (2*r*p)/(r+p)
+  print("F1 Score")
+  print(f1)
+  # ROC curve
+  pred <- prediction(predictions=as.numeric(prediction),labels=labels)
+  roc.perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+  pdf("output/ROCcurve.pdf")
+  print(plot(roc.perf,main="ROC Curve") )
+  print(abline(a=0, b= 1,col="red",lty=2))
+  dev.off()
+}
+
+labels <- final_table$binary
+predictions <- final_table$predicted
+
+performance_suite(labels,predictions)
